@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	loglevel = flag.Int("loglevel", 3, "logging verbosity")
+	loglevel = flag.Int("loglevel", 2, "logging verbosity")
 	psses    map[string]*pss.Pss
 	crypt    crypto.Crypto
 )

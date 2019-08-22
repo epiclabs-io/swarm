@@ -26,10 +26,8 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,49 +35,20 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethCrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethersphere/swarm/network"
 	"github.com/ethersphere/swarm/network/simulation"
 	"github.com/ethersphere/swarm/p2p/protocols"
 	"github.com/ethersphere/swarm/pot"
 	"github.com/ethersphere/swarm/pss/crypto"
-	"github.com/ethersphere/swarm/state"
-)
-
-var (
-	initOnce        = sync.Once{}
-	loglevel        = flag.Int("loglevel", 2, "logging verbosity")
-	longrunning     = flag.Bool("longrunning", false, "do run long-running tests")
-	psslogmain      log.Logger
-	pssprotocols    map[string]*protoCtrl
-	useHandshake    bool
-	noopHandlerFunc = func(msg []byte, p *p2p.Peer, asymmetric bool, keyid string) error {
-		return nil
-	}
 )
 
 func init() {
 	flag.Parse()
 	rand.Seed(time.Now().Unix())
 	initTest()
-}
-
-func initTest() {
-	initOnce.Do(
-		func() {
-			psslogmain = log.New("psslog", "*")
-			hs := log.StreamHandler(os.Stderr, log.TerminalFormat(true))
-			hf := log.LvlFilterHandler(log.Lvl(*loglevel), hs)
-			h := log.CallerFileHandler(hf)
-			log.Root().SetHandler(h)
-
-			pssprotocols = make(map[string]*protoCtrl)
-		},
-	)
 }
 
 // test that topic conversion functions give predictable results
@@ -1247,9 +1216,9 @@ func testNetwork(t *testing.T) {
 
 	var sim = &simulation.Simulation{}
 	if adapter == "exec" {
-		sim, _ = simulation.NewExec(newServices(false))
+		sim, _ = simulation.NewExec(newServices(DefaultTestParams))
 	} else if adapter == "tcp" || adapter == "sim" {
-		sim = simulation.NewInProc(newServices(false))
+		sim = simulation.NewInProc(newServices(DefaultTestParams))
 	}
 	defer sim.Close()
 
@@ -1709,127 +1678,6 @@ func testRandomMessage() *PssMsg {
 	return msg
 }
 
-// setup simulated network with bzz/discovery and pss services.
-// connects nodes in a circle
-// if allowRaw is set, omission of builtin pss encryption is enabled (see PssParams)
-func setupNetwork(numnodes int, allowRaw bool) (clients []*rpc.Client, closeSimFunc func(), err error) {
-	clients = make([]*rpc.Client, numnodes)
-	if numnodes < 2 {
-		return nil, nil, fmt.Errorf("minimum two nodes in network")
-	}
-	sim := simulation.NewInProc(newServices(allowRaw))
-	closeSimFunc = sim.Close
-	if numnodes == 2 {
-		_, err = sim.AddNodesAndConnectChain(numnodes)
-
-	} else {
-		_, err = sim.AddNodesAndConnectRing(numnodes)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	nodes := sim.Net.GetNodes()
-	for id, node := range nodes {
-		client, err := node.Client()
-		if err != nil {
-			return nil, nil, fmt.Errorf("error getting the nodes clients")
-		}
-		clients[id] = client
-	}
-	return clients, closeSimFunc, nil
-}
-
-func newServices(allowRaw bool) map[string]simulation.ServiceFunc {
-	stateStore := state.NewInmemoryStore()
-	kademlias := make(map[enode.ID]*network.Kademlia)
-	kademlia := func(id enode.ID, bzzKey []byte) *network.Kademlia {
-		if k, ok := kademlias[id]; ok {
-			return k
-		}
-		params := network.NewKadParams()
-		params.NeighbourhoodSize = 2
-		params.MaxBinSize = 3
-		params.MinBinSize = 1
-		params.MaxRetries = 1000
-		params.RetryExponent = 2
-		params.RetryInterval = 1000000
-		kademlias[id] = network.NewKademlia(bzzKey, params)
-		return kademlias[id]
-	}
-	return map[string]simulation.ServiceFunc{
-		"bzz": func(ctx *adapters.ServiceContext, bucket *sync.Map) (s node.Service, cleanup func(), err error) {
-			addr := network.NewAddr(ctx.Config.Node())
-			bzzPrivateKey, err := simulation.BzzPrivateKeyFromConfig(ctx.Config)
-			if err != nil {
-				return nil, nil, err
-			}
-			addr.OAddr = network.PrivateKeyToBzzKey(bzzPrivateKey)
-			bucket.Store(simulation.BucketKeyBzzPrivateKey, bzzPrivateKey)
-			hp := network.NewHiveParams()
-			hp.Discovery = false
-			config := &network.BzzConfig{
-				OverlayAddr:  addr.Over(),
-				UnderlayAddr: addr.Under(),
-				HiveParams:   hp,
-			}
-			pskad := kademlia(ctx.Config.ID, addr.OAddr)
-			bucket.Store(simulation.BucketKeyKademlia, pskad)
-			return network.NewBzz(config, pskad, stateStore, nil, nil), nil, nil
-		},
-		protocolName: func(ctx *adapters.ServiceContext, bucket *sync.Map) (node.Service, func(), error) {
-			// execadapter does not exec init()
-			initTest()
-
-			privkey, err := ethCrypto.GenerateKey()
-			pssp := NewParams().WithPrivateKey(privkey)
-			pssp.AllowRaw = allowRaw
-			bzzPrivateKey, err := simulation.BzzPrivateKeyFromConfig(ctx.Config)
-			if err != nil {
-				return nil, nil, err
-			}
-			bzzKey := network.PrivateKeyToBzzKey(bzzPrivateKey)
-			pskad := kademlia(ctx.Config.ID, bzzKey)
-			bucket.Store(simulation.BucketKeyKademlia, pskad)
-			ps, err := New(pskad, pssp)
-			if err != nil {
-				return nil, nil, err
-			}
-			ping := &Ping{
-				OutC: make(chan bool),
-				Pong: true,
-			}
-			p2pp := NewPingProtocol(ping)
-			pp, err := RegisterProtocol(ps, &PingTopic, PingProtocol, p2pp, &ProtocolParams{Asymmetric: true})
-			if err != nil {
-				return nil, nil, err
-			}
-			if useHandshake {
-				SetHandshakeController(ps, NewHandshakeParams())
-			}
-			cleanupFunc := ps.Register(&PingTopic, &handler{
-				f: pp.Handle,
-				caps: &handlerCaps{
-					raw: true,
-				},
-			})
-			ps.addAPI(rpc.API{
-				Namespace: "psstest",
-				Version:   "0.3",
-				Service:   NewAPITest(ps),
-				Public:    false,
-			})
-			pssprotocols[ctx.Config.ID.String()] = &protoCtrl{
-				C:        ping.OutC,
-				protocol: pp,
-				run:      p2pp.Run,
-			}
-			return ps, cleanupFunc, nil
-
-		},
-	}
-}
-
-// New Test Pss that will be started
 func newTestPss(privkey *ecdsa.PrivateKey, kad *network.Kademlia, ppextra *Params) *Pss {
 	return newTestPssStart(privkey, kad, ppextra, true)
 }
@@ -1861,30 +1709,4 @@ func newTestPssStart(privkey *ecdsa.PrivateKey, kad *network.Kademlia, ppextra *
 	}
 
 	return ps
-}
-
-// API calls for test/development use
-type APITest struct {
-	*Pss
-}
-
-func NewAPITest(ps *Pss) *APITest {
-	return &APITest{Pss: ps}
-}
-
-func (apitest *APITest) SetSymKeys(pubkeyid string, recvsymkey []byte, sendsymkey []byte, limit uint16, topic Topic, to hexutil.Bytes) ([2]string, error) {
-
-	recvsymkeyid, err := apitest.SetSymmetricKey(recvsymkey, topic, PssAddress(to), true)
-	if err != nil {
-		return [2]string{}, err
-	}
-	sendsymkeyid, err := apitest.SetSymmetricKey(sendsymkey, topic, PssAddress(to), false)
-	if err != nil {
-		return [2]string{}, err
-	}
-	return [2]string{recvsymkeyid, sendsymkeyid}, nil
-}
-
-func (apitest *APITest) Clean() (int, error) {
-	return apitest.Pss.cleanKeys(), nil
 }

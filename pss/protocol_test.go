@@ -31,12 +31,6 @@ import (
 	"github.com/ethersphere/swarm/log"
 )
 
-type protoCtrl struct {
-	C        chan bool
-	protocol *Protocol
-	run      func(*p2p.Peer, p2p.MsgReadWriter) error
-}
-
 // simple ping pong protocol test for the pss devp2p emulation
 func TestProtocol(t *testing.T) {
 	t.Run("32", testProtocol)
@@ -45,7 +39,6 @@ func TestProtocol(t *testing.T) {
 }
 
 func testProtocol(t *testing.T) {
-
 	// address hint size
 	var addrsize int64
 	paramstring := strings.Split(t.Name(), "/")

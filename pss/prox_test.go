@@ -2,7 +2,6 @@ package pss
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -11,9 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethCrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/simulations/adapters"
@@ -21,11 +18,10 @@ import (
 	"github.com/ethersphere/swarm/network"
 	"github.com/ethersphere/swarm/network/simulation"
 	"github.com/ethersphere/swarm/pot"
-	"github.com/ethersphere/swarm/state"
 )
 
 // needed to make the enode id of the receiving node available to the handler for triggers
-type handlerContextFunc func(*testData, *adapters.NodeConfig) *handler
+//type handlerContextFunc func(*testData, *adapters.NodeConfig) *handler
 
 // struct to notify reception of messages to simulation driver
 // TODO To make code cleaner:
@@ -234,9 +230,7 @@ func TestProxNetworkLong(t *testing.T) {
 
 func testProxNetwork(t *testing.T, nodeCount int, msgCount int, timeout time.Duration) {
 	td := newTestData()
-	handlerContextFuncs := make(map[Topic]handlerContextFunc)
-	handlerContextFuncs[topic] = nodeMsgHandler
-	services := newProxServices(td, true, handlerContextFuncs, td.kademlias)
+	services := newServicesWithHandlers(td, testParams{AllowRaw: true})
 	td.sim = simulation.NewInProc(services)
 	defer td.sim.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -353,116 +347,35 @@ func (td *testData) removeAllowedMessage(id enode.ID, index int) {
 	td.allowedMsgs[id] = td.allowedMsgs[id][:last]
 }
 
-func nodeMsgHandler(td *testData, config *adapters.NodeConfig) *handler {
-	return &handler{
-		f: func(msg []byte, p *p2p.Peer, asymmetric bool, keyid string) error {
-			if td.isDone() {
-				return nil // terminate if simulation is over
-			}
+func (td *testData) nodeMessageHandlers() map[Topic]HandlerContextFunc {
+	handlerContextFuncs := make(map[Topic]HandlerContextFunc)
+	handlerContextFuncs[topic] = func(config *adapters.NodeConfig) *handler {
+		return &handler{
+			f: func(msg []byte, p *p2p.Peer, asymmetric bool, keyid string) error {
+				if td.isDone() {
+					return nil // terminate if simulation is over
+				}
 
-			td.incrementMsgCount()
+				td.incrementMsgCount()
 
-			// using simple serial in message body, makes it easy to keep track of who's getting what
-			serial, c := binary.Uvarint(msg)
-			if c <= 0 {
-				log.Crit(fmt.Sprintf("corrupt message received by %x (uvarint parse returned %d)", config.ID, c))
-			}
+				// using simple serial in message body, makes it easy to keep track of who's getting what
+				serial, c := binary.Uvarint(msg)
+				if c <= 0 {
+					log.Crit(fmt.Sprintf("corrupt message received by %x (uvarint parse returned %d)", config.ID, c))
+				}
 
-			td.pushNotification(handlerNotification{id: config.ID, serial: serial})
-			return nil
-		},
-		caps: &handlerCaps{
-			raw:  true, // we use raw messages for simplicity
-			prox: true,
-		},
+				td.pushNotification(handlerNotification{id: config.ID, serial: serial})
+				return nil
+			},
+			caps: &handlerCaps{
+				raw:  true, // we use raw messages for simplicity
+				prox: true,
+			},
+		}
 	}
+	return handlerContextFuncs
 }
 
-// an adaptation of the same services setup as in pss_test.go
-// replaces pss_test.go when those tests are rewritten to the new swarm/network/simulation package
-func newProxServices(td *testData, allowRaw bool, handlerContextFuncs map[Topic]handlerContextFunc, kademlias map[enode.ID]*network.Kademlia) map[string]simulation.ServiceFunc {
-	stateStore := state.NewInmemoryStore()
-	kademlia := func(id enode.ID, bzzkey []byte) *network.Kademlia {
-		if k, ok := kademlias[id]; ok {
-			return k
-		}
-		params := network.NewKadParams()
-		params.MaxBinSize = 3
-		params.MinBinSize = 1
-		params.MaxRetries = 1000
-		params.RetryExponent = 2
-		params.RetryInterval = 1000000
-		kademlias[id] = network.NewKademlia(bzzkey, params)
-		return kademlias[id]
-	}
-	return map[string]simulation.ServiceFunc{
-		"bzz": func(ctx *adapters.ServiceContext, b *sync.Map) (node.Service, func(), error) {
-			var err error
-			var bzzPrivateKey *ecdsa.PrivateKey
-			// normally translation of enode id to swarm address is concealed by the network package
-			// however, we need to keep track of it in the test driver as well.
-			// if the translation in the network package changes, that can cause these tests to unpredictably fail
-			// therefore we keep a local copy of the translation here
-			addr := network.NewAddr(ctx.Config.Node())
-			bzzPrivateKey, err = simulation.BzzPrivateKeyFromConfig(ctx.Config)
-			if err != nil {
-				return nil, nil, err
-			}
-			addr.OAddr = network.PrivateKeyToBzzKey(bzzPrivateKey)
-			b.Store(simulation.BucketKeyBzzPrivateKey, bzzPrivateKey)
-			hp := network.NewHiveParams()
-			hp.Discovery = false
-			config := &network.BzzConfig{
-				OverlayAddr:  addr.Over(),
-				UnderlayAddr: addr.Under(),
-				HiveParams:   hp,
-			}
-			bzzKey := network.PrivateKeyToBzzKey(bzzPrivateKey)
-			pskad := kademlia(ctx.Config.ID, bzzKey)
-			b.Store(simulation.BucketKeyKademlia, pskad)
-			return network.NewBzz(config, kademlia(ctx.Config.ID, addr.OAddr), stateStore, nil, nil), nil, nil
-		},
-		"pss": func(ctx *adapters.ServiceContext, b *sync.Map) (node.Service, func(), error) {
-			// execadapter does not exec init()
-			initTest()
-
-			// create keys and set up the pss object
-			privkey, err := ethCrypto.GenerateKey()
-			pssp := NewParams().WithPrivateKey(privkey)
-			pssp.AllowRaw = allowRaw
-			bzzPrivateKey, err := simulation.BzzPrivateKeyFromConfig(ctx.Config)
-			if err != nil {
-				return nil, nil, err
-			}
-			bzzKey := network.PrivateKeyToBzzKey(bzzPrivateKey)
-			pskad := kademlia(ctx.Config.ID, bzzKey)
-			b.Store(simulation.BucketKeyKademlia, pskad)
-			ps, err := New(pskad, pssp)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			// register the handlers we've been passed
-			var deregisters []func()
-			for tpc, hndlrFunc := range handlerContextFuncs {
-				deregisters = append(deregisters, ps.Register(&tpc, hndlrFunc(td, ctx.Config)))
-			}
-
-			// we expose some api calls for cheating
-			ps.addAPI(rpc.API{
-				Namespace: "psstest",
-				Version:   "0.3",
-				Service:   NewAPITest(ps),
-				Public:    false,
-			})
-
-			// return Pss and cleanups
-			return ps, func() {
-				// run the handler deregister functions in reverse order
-				for i := len(deregisters); i > 0; i-- {
-					deregisters[i-1]()
-				}
-			}, nil
-		},
-	}
+func (td *testData) getKademlias() map[enode.ID]*network.Kademlia {
+	return td.kademlias
 }
