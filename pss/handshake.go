@@ -20,7 +20,6 @@ package pss
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -384,7 +383,7 @@ func (ctl *HandshakeController) sendKey(pubkeyid string, topic *Topic, keycount 
 	var requestcount uint8
 	to := PssAddress{}
 	if _, ok := ctl.pss.pubKeyPool[pubkeyid]; !ok {
-		return []string{}, errors.New("Invalid public key")
+		return []string{}, ErrInvalidKey
 	} else if psp, ok := ctl.pss.pubKeyPool[pubkeyid][*topic]; ok {
 		to = psp.address
 	}
@@ -490,7 +489,7 @@ func (api *HandshakeAPI) Handshake(pubkeyid string, topic Topic, sync bool, flus
 		keycount = api.ctrl.symKeyCapacity - uint8(len(validkeys))
 	}
 	if keycount == 0 {
-		return keys, errors.New("Incoming symmetric key store is already full")
+		return keys, fmt.Errorf("incoming symmetric key store is already full")
 	}
 	if sync {
 		hsc = api.ctrl.alertHandshake(pubkeyid, []string{})
@@ -506,7 +505,7 @@ func (api *HandshakeAPI) Handshake(pubkeyid string, topic Topic, sync bool, flus
 		case keys = <-hsc:
 			log.Trace("sync handshake response receive", "key", keys)
 		case <-ctx.Done():
-			return []string{}, errors.New("timeout")
+			return []string{}, fmt.Errorf("timeout")
 		}
 	}
 	return keys, nil

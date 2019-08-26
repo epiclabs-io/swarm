@@ -18,7 +18,6 @@ package pss
 
 import (
 	"crypto/ecdsa"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -88,7 +87,7 @@ func (ks *KeyStore) SetPeerPublicKey(pubkey *ecdsa.PublicKey, topic Topic, addre
 	}
 	pubkeybytes := crypto.FromECDSAPub(pubkey)
 	if len(pubkeybytes) == 0 {
-		return fmt.Errorf("invalid public key: %v", pubkey)
+		return fmt.Errorf("%v, %s", ErrInvalidKey, pubkey)
 	}
 	pubkeyid := common.ToHex(pubkeybytes)
 	psp := &peer{
@@ -164,7 +163,7 @@ func (ks *KeyStore) processSym(envelope *whisper.Envelope) (*whisper.ReceivedMes
 			continue
 		}
 		if !recvmsg.ValidateAndParse() {
-			return nil, "", nil, errors.New("symmetrically encrypted message has invalid signature or is corrupt")
+			return nil, "", nil, fmt.Errorf("%v, symmetrically encrypted message has invalid signature or is corrupt", ErrInvalidMsg)
 		}
 		var from PssAddress
 		ks.mx.RLock()
@@ -176,7 +175,7 @@ func (ks *KeyStore) processSym(envelope *whisper.Envelope) (*whisper.ReceivedMes
 		ks.symKeyDecryptCache[ks.symKeyDecryptCacheCursor%cap(ks.symKeyDecryptCache)] = symkeyid
 		return recvmsg, *symkeyid, from, nil
 	}
-	return nil, "", nil, errors.New("could not decrypt message")
+	return nil, "", nil, fmt.Errorf("could not decrypt message")
 }
 
 // Attempt to decrypt, validate and unpack an asymmetrically encrypted message.
@@ -189,11 +188,11 @@ func (ks *Pss) processAsym(envelope *whisper.Envelope) (*whisper.ReceivedMessage
 
 	recvmsg, err := envelope.OpenAsymmetric(ks.privateKey)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("could not decrypt message: %s", err)
+		return nil, "", nil, fmt.Errorf("could not decrypt message: %v", err)
 	}
 	// check signature (if signed), strip padding
 	if !recvmsg.ValidateAndParse() {
-		return nil, "", nil, errors.New("invalid message")
+		return nil, "", nil, ErrInvalidMsg
 	}
 	pubkeyid := common.ToHex(crypto.FromECDSAPub(recvmsg.Src))
 	var from PssAddress

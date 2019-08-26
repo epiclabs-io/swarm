@@ -18,6 +18,7 @@ package pss
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -43,6 +44,20 @@ var (
 	topicHashMutex = sync.Mutex{}
 	topicHashFunc  = storage.MakeHashFunc("SHA256")()
 	rawTopic       = Topic{}
+)
+
+//Errors
+var (
+	ErrOutboxFull         = errors.New("outbox full") //Error triggered when trying to enqueue a message and the outbox is full
+	ErrInvalidAddress     = errors.New("address is invalid")
+	ErrInvalidMsg         = errors.New("message is invalid") //Error triggered when proccesing messages, with sym or asym encryption, and validation of the message fails
+	ErrInvalidKey         = errors.New("invalid key")
+	ErrInvalidTopic       = errors.New("topic is invalid")
+	ErrInvalidTopicForKey = errors.New("invalid topic for key")
+	ErrDecryptionFailed   = errors.New("decryption failed")
+	ErrHandleOnNilMsgRW   = errors.New("handle called on nil MsgReadWriter")
+	ErrDecodeMsg          = errors.New("could not decode message")
+	ErrKeyNotExistent     = errors.New("key does not exist")
 )
 
 // Topic is the PSS encapsulation of the Whisper topic type

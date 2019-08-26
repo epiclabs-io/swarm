@@ -173,23 +173,23 @@ func (p *Protocol) Handle(msg []byte, peer *p2p.Peer, asymmetric bool, keyid str
 		if err != nil {
 			return err
 		} else if rw == nil {
-			return fmt.Errorf("handle called on nil MsgReadWriter for new key " + keyid)
+			return fmt.Errorf("%v for new key %s", ErrHandleOnNilMsgRW, keyid)
 		}
 		vrw = rw.(*PssReadWriter)
 	}
 
 	pmsg, err := ToP2pMsg(msg)
 	if err != nil {
-		return fmt.Errorf("could not decode pssmsg")
+		return fmt.Errorf("%v, %v", ErrDecodeMsg, err)
 	}
 	if asymmetric {
 		if p.pubKeyRWPool[keyid] == nil {
-			return fmt.Errorf("handle called on nil MsgReadWriter for key " + keyid)
+			return fmt.Errorf("%v for key %s", ErrHandleOnNilMsgRW, keyid)
 		}
 		vrw = p.pubKeyRWPool[keyid].(*PssReadWriter)
 	} else {
 		if p.symKeyRWPool[keyid] == nil {
-			return fmt.Errorf("handle called on nil MsgReadWriter for key " + keyid)
+			return fmt.Errorf("%v for key %s", ErrHandleOnNilMsgRW, keyid)
 		}
 		vrw = p.symKeyRWPool[keyid].(*PssReadWriter)
 	}
@@ -242,14 +242,14 @@ func (p *Protocol) AddPeer(peer *p2p.Peer, topic Topic, asymmetric bool, key str
 	}
 	if asymmetric {
 		if !p.Pss.isPubKeyStored(key) {
-			return nil, fmt.Errorf("asym key does not exist: %s", key)
+			return nil, fmt.Errorf("%v, asym key: %s", ErrKeyNotExistent, key)
 		}
 		p.RWPoolMu.Lock()
 		p.pubKeyRWPool[key] = rw
 		p.RWPoolMu.Unlock()
 	} else {
 		if !p.Pss.isSymKeyStored(key) {
-			return nil, fmt.Errorf("symkey does not exist: %s", key)
+			return nil, fmt.Errorf("%v, sym key: %s", ErrKeyNotExistent, key)
 		}
 		p.RWPoolMu.Lock()
 		p.symKeyRWPool[key] = rw

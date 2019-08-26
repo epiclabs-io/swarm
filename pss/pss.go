@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"hash"
 	"sync"
@@ -34,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/rpc"
 	whisper "github.com/ethereum/go-ethereum/whisper/whisperv6"
+
 	"github.com/ethersphere/swarm/log"
 	"github.com/ethersphere/swarm/network"
 	"github.com/ethersphere/swarm/p2p/protocols"
@@ -159,7 +159,7 @@ func (p *Pss) String() string {
 // and a FileStore storage for message cache storage.
 func New(k *network.Kademlia, params *Params) (*Pss, error) {
 	if params.privateKey == nil {
-		return nil, errors.New("missing private key for pss")
+		return nil, fmt.Errorf("missing private key for pss")
 	}
 	c := p2p.Cap{
 		Name:    protocolName,
@@ -481,7 +481,7 @@ func (p *Pss) process(pssmsg *PssMsg, raw bool, prox bool) error {
 
 		recvmsg, keyid, from, err = keyFunc(envelope)
 		if err != nil {
-			return errors.New("Decryption failed")
+			return fmt.Errorf("%v, %v", ErrDecryptionFailed, err)
 		}
 		payload = recvmsg.Payload
 	}
@@ -560,13 +560,11 @@ func (p *Pss) enqueue(msg *PssMsg) error {
 	select {
 	case p.outbox <- outboxmsg:
 		metrics.GetOrRegisterGauge("pss.outbox.len", nil).Update(int64(len(p.outbox)))
-
 		return nil
 	default:
 	}
-
 	metrics.GetOrRegisterCounter("pss.enqueue.outbox.full", nil).Inc(1)
-	return errors.New("outbox full")
+	return ErrOutboxFull
 }
 
 // Send a raw message (any encryption is responsibility of calling client)
@@ -607,7 +605,7 @@ func (p *Pss) SendSym(symkeyid string, topic Topic, msg []byte) error {
 	}
 	psp, ok := p.getPeerSym(symkeyid, topic)
 	if !ok {
-		return fmt.Errorf("invalid topic '%s' for symkey '%s'", topic.String(), symkeyid)
+		return fmt.Errorf("%v, topic: %s, key: %s", ErrInvalidTopicForKey, topic.String(), symkeyid)
 	}
 	return p.send(psp.address, topic, msg, false, symkey)
 }
@@ -617,11 +615,11 @@ func (p *Pss) SendSym(symkeyid string, topic Topic, msg []byte) error {
 // Fails if the key id does not match any in of the stored public keys
 func (p *Pss) SendAsym(pubkeyid string, topic Topic, msg []byte) error {
 	if _, err := crypto.UnmarshalPubkey(common.FromHex(pubkeyid)); err != nil {
-		return fmt.Errorf("Cannot unmarshal pubkey: %x", pubkeyid)
+		return fmt.Errorf("%v, cannot unmarshal pubkey: %x", ErrInvalidKey, pubkeyid)
 	}
 	psp, ok := p.getPeerPub(pubkeyid, topic)
 	if !ok {
-		return fmt.Errorf("invalid topic '%s' for pubkey '%s'", topic.String(), pubkeyid)
+		return fmt.Errorf("%v, topic: %s, key: %s", ErrInvalidTopicForKey, topic.String(), pubkeyid)
 	}
 	return p.send(psp.address, topic, msg, true, common.FromHex(pubkeyid))
 }
@@ -634,7 +632,7 @@ func (p *Pss) send(to []byte, topic Topic, msg []byte, asymmetric bool, key []by
 	metrics.GetOrRegisterCounter("pss.send", nil).Inc(1)
 
 	if key == nil || bytes.Equal(key, []byte{}) {
-		return fmt.Errorf("Zero length key passed to pss send")
+		return fmt.Errorf("%v, zero length key passed to pss send", ErrInvalidKey)
 	}
 	padding := make([]byte, p.paddingByteSize)
 	c, err := rand.Read(padding)
@@ -655,7 +653,7 @@ func (p *Pss) send(to []byte, topic Topic, msg []byte, asymmetric bool, key []by
 	if asymmetric {
 		pk, err := crypto.UnmarshalPubkey(key)
 		if err != nil {
-			return fmt.Errorf("Cannot unmarshal pubkey: %x", key)
+			return fmt.Errorf("%v, cannot unmarshal pubkey: %x", ErrInvalidKey, key)
 		}
 		wparams.Dst = pk
 	} else {
@@ -869,7 +867,7 @@ func (p *Pss) digestBytes(msg []byte) digest {
 
 func validateAddress(addr PssAddress) error {
 	if len(addr) > addressLength {
-		return errors.New("address too long")
+		return ErrInvalidAddress
 	}
 	return nil
 }

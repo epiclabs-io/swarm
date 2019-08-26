@@ -91,7 +91,7 @@ func (rw *pssRPCRW) ReadMsg() (p2p.Msg, error) {
 	log.Trace("pssrpcrw read", "msg", msg)
 	pmsg, err := pss.ToP2pMsg(msg)
 	if err != nil {
-		return p2p.Msg{}, err
+		return p2p.Msg{}, fmt.Errorf("%v, %v", pss.ErrDecodeMsg, err)
 	}
 
 	return pmsg, nil

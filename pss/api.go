@@ -18,7 +18,6 @@ package pss
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -54,7 +53,7 @@ func NewAPI(ps *Pss) *API {
 func (pssapi *API) Receive(ctx context.Context, topic Topic, raw bool, prox bool) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
-		return nil, fmt.Errorf("Subscribe not supported")
+		return nil, fmt.Errorf("subscribe not supported")
 	}
 
 	psssub := notifier.CreateSubscription()
@@ -126,11 +125,11 @@ func (pssapi *API) GetPublicKey() (keybytes hexutil.Bytes) {
 func (pssapi *API) SetPeerPublicKey(pubkey hexutil.Bytes, topic Topic, addr PssAddress) error {
 	pk, err := crypto.UnmarshalPubkey(pubkey)
 	if err != nil {
-		return fmt.Errorf("Cannot unmarshal pubkey: %x", pubkey)
+		return fmt.Errorf("%v, cannot unmarshal pubkey: %x", ErrInvalidKey, pubkey)
 	}
 	err = pssapi.Pss.SetPeerPublicKey(pk, topic, addr)
 	if err != nil {
-		return fmt.Errorf("Invalid key: %x", pk)
+		return fmt.Errorf("%v, %x", ErrInvalidKey, pk)
 	}
 	return nil
 }
@@ -151,7 +150,7 @@ func (pssapi *API) GetAsymmetricAddressHint(topic Topic, pubkeyid string) (PssAd
 func (pssapi *API) StringToTopic(topicstring string) (Topic, error) {
 	topicbytes := BytesToTopic([]byte(topicstring))
 	if topicbytes == rawTopic {
-		return rawTopic, errors.New("Topic string hashes to 0x00000000 and cannot be used")
+		return rawTopic, fmt.Errorf("%v, topic string hashes to 0x00000000 and cannot be used", ErrInvalidTopic)
 	}
 	return topicbytes, nil
 }
@@ -189,7 +188,7 @@ func (pssapi *API) GetPeerAddress(pubkeyhex string, topic Topic) (PssAddress, er
 
 func validateMsg(msg []byte) error {
 	if len(msg) == 0 {
-		return errors.New("invalid message length")
+		return ErrInvalidMsg
 	}
 	return nil
 }

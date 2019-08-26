@@ -20,7 +20,6 @@ package pss
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p"
@@ -45,7 +44,7 @@ func (p *Ping) pingHandler(ctx context.Context, msg interface{}) error {
 	var pingmsg *PingMsg
 	var ok bool
 	if pingmsg, ok = msg.(*PingMsg); !ok {
-		return errors.New("invalid msg")
+		return ErrInvalidMsg
 	}
 	log.Debug("ping handler", "msg", pingmsg, "outc", p.OutC)
 	if p.InC != nil {
