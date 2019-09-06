@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethersphere/swarm/network"
 	"github.com/ethersphere/swarm/pss"
+	"github.com/ethersphere/swarm/pss/crypto"
 	"github.com/ethersphere/swarm/state"
 )
 
@@ -48,7 +49,7 @@ type protoCtrl struct {
 var (
 	debugdebugflag = flag.Bool("vv", false, "veryverbose")
 	debugflag      = flag.Bool("v", false, "verbose")
-	cryptoUtils    pss.CryptoUtils
+	cryptoUtils    crypto.CryptoUtils
 	// custom logging
 	psslogmain   log.Logger
 	pssprotocols map[string]*protoCtrl
@@ -76,7 +77,7 @@ func init() {
 	h := log.CallerFileHandler(hf)
 	log.Root().SetHandler(h)
 
-	cryptoUtils = pss.NewCryptoUtils()
+	cryptoUtils = crypto.NewCryptoUtils()
 
 	pssprotocols = make(map[string]*protoCtrl)
 }
